@@ -37,7 +37,7 @@ jobs:
           # every top-level module except the private Pocket target
           for m in $(git config --file .gitmodules --get-regexp path | awk '{print $2}'); do
             case "$m" in modules/jtframe/target/pocket) continue;; esac
-            git submodule update --init --depth 1 "$m" || echo "WARN: could not init $m"
+            git submodule update --init --recursive --depth 1 "$m" || echo "WARN: could not init $m"
           done
 
       - name: Free disk space for the 5 GB toolchain image
