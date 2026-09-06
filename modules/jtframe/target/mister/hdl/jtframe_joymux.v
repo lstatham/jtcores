@@ -24,10 +24,14 @@ module jtframe_joymux(
     input      [15:0] joyusb_2,
     input      [15:0] anausb_l1,
     input      [15:0] anausb_r1,
+    input      [ 8:0] spinusb_1,
+    input      [ 7:0] padusb_1,
     output reg [15:0] joymux_1,
     output reg [15:0] joymux_2,
     output reg [15:0] anamux_l1,
-    output reg [15:0] anamux_r1
+    output reg [15:0] anamux_r1,
+    output reg [ 8:0] spinmux_1,   // MiSTer spinner: [8] toggles per step, [7:0] signed step
+    output reg [ 7:0] padmux_1     // MiSTer paddle 0..255
 );
 
 parameter BUTTONS = 2;
@@ -44,6 +48,16 @@ localparam [7:0] ID_JOGCON = 8'he3;
 // JogConUSB firmware uses the same 80), and the motor hold strength 1-15.
 localparam JOG_RANGE = 80;
 localparam JOG_FORCE = 15;
+// One spinner step per JOG_SPIN_STEP dial counts, paced at JOG_SPIN_HZ so
+// jtframe_dial never sees two toggles before it has drained the first.
+localparam JOG_SPIN_STEP = 1;
+localparam JOG_SPIN_HZ   = 10_000;
+localparam JOG_SPIN_DIV  = CLK_HZ/JOG_SPIN_HZ;
+// Jogcon role follows the input the core consumes: dial cores get a free
+// spinner, paddle cores a paddle with motor stops at both ends, the rest
+// a self-centring wheel on left X.
+localparam ROLE_WHEEL = 0, ROLE_SPINNER = 1, ROLE_PADDLE = 2;
+localparam JOG_ROLE = `ifdef JTFRAME_DIAL ROLE_SPINNER `elsif JTFRAME_PADDLE ROLE_PADDLE `else ROLE_WHEEL `endif;
 
 wire [15:0] joydb15_1,joydb15_2;
 wire        joy_din, joy_clk, joy_load;
@@ -54,6 +68,8 @@ wire [ 7:0] psx_id;
 wire [15:0] psx_btn;
 wire [31:0] psx_ana;
 wire [ 7:0] psx_motor;
+wire        psx_upd;
+wire        is_jog = psx_conn && psx_id==ID_JOGCON;
 
 // USER_OUT: pins not driven by the selected mode stay high (input)
 // PSX SNAC pin roles follow PSX_MiSTer: 0 /ATT2, 1 /ATT1, 2 CMD, 3 ACK, 4 DAT, 5 CLK, 6 IRQ
@@ -173,14 +189,63 @@ endfunction
 
 wire [15:0] psxjoy_1 = psx_conn ? psx2joy( psx_id, psx_btn ) : 16'd0;
 wire [31:0] psxana_1 = psx_conn ? psx2ana( psx_id, psx_ana, twist_off ) : 32'd0;
-// Jogcon: hold the dial at its zero position with the configured strength
-assign psx_motor = (psx_conn && psx_id==ID_JOGCON) ? { 4'h3, JOG_FORCE[3:0] } : 8'h00;
+// Jogcon motor: hold the dial at its zero position with the configured
+// strength. Wheel role: always. Paddle role: only past either end, which
+// pushes the dial back like a stopper. Spinner role: never.
+wire signed [15:0] jog_pos = $signed(psx_ana[15:0]);
+wire        jog_past_end = jog_pos > $signed(JOG_RANGE[15:0]) || jog_pos < -$signed(JOG_RANGE[15:0]);
+wire        jog_hold = JOG_ROLE==ROLE_WHEEL ? 1'b1 : JOG_ROLE==ROLE_PADDLE ? jog_past_end : 1'b0;
+assign psx_motor = (is_jog && jog_hold) ? { 4'h3, JOG_FORCE[3:0] } : 8'h00;
+
+// Jogcon dial as paddle: absolute position, 0..255 across +/-JOG_RANGE
+function [7:0] jog2paddle( input [15:0] pos );
+    reg signed [15:0] p;
+    reg        [15:0] u;
+    reg        [23:0] m;
+    p = $signed(pos);
+    if( p >  $signed(JOG_RANGE[15:0]) ) p =  JOG_RANGE[15:0];
+    if( p < -$signed(JOG_RANGE[15:0]) ) p = -JOG_RANGE[15:0];
+    u = p + JOG_RANGE[15:0];                 // 0..2*JOG_RANGE
+    m = u * 24'd408;                         // 255/160 = 408/256 for a range of 80
+    jog2paddle = m[15:8];
+endfunction
+
+// Jogcon dial as spinner: accumulate the counter change per poll and emit
+// one paced toggle per JOG_SPIN_STEP counts, sign in bit 7 (MiSTer style)
+reg  signed [15:0] jog_prev = 0, jog_acc = 0;
+reg  [15:0] spin_div = 0;
+reg         psx_upd_l = 0, jog_l = 0;
+wire signed [15:0] jog_delta = jog_pos - jog_prev;
+
+always @(posedge clk) begin
+    psx_upd_l <= psx_upd;
+    jog_l     <= is_jog;
+    if( !is_jog ) begin
+        jog_prev <= 0;
+        jog_acc  <= 0;
+    end else if( psx_upd_l ) begin
+        if( jog_l ) jog_acc <= jog_acc + jog_delta;   // first frame after connect sets the reference only
+        jog_prev <= jog_pos;
+    end
+    spin_div <= spin_div==JOG_SPIN_DIV-1 ? 16'd0 : spin_div + 16'd1;
+    if( spin_div==16'd0 && is_jog && !psx_upd_l ) begin
+        if( jog_acc >= $signed(JOG_SPIN_STEP[15:0]) ) begin
+            jog_acc   <= jog_acc - JOG_SPIN_STEP[15:0];
+            spinmux_1 <= { ~spinmux_1[8], 8'h01 };
+        end else if( jog_acc <= -$signed(JOG_SPIN_STEP[15:0]) ) begin
+            jog_acc   <= jog_acc + JOG_SPIN_STEP[15:0];
+            spinmux_1 <= { ~spinmux_1[8], 8'hff };
+        end
+    end
+    if( !psx_en ) spinmux_1 <= spinusb_1;
+end
 
 always @(posedge clk) begin
     joymux_1  <= psx_en ? psxjoy_1 : assign_joy( joydb15_1, joyusb_1 );
     joymux_2  <= assign_joy( joydb15_2, joyusb_2 );
     anamux_l1 <= psx_en ? psxana_1[15: 0] : anausb_l1;
     anamux_r1 <= psx_en ? psxana_1[31:16] : anausb_r1;
+    padmux_1  <= !psx_en ? padusb_1 : is_jog ? jog2paddle(psx_ana[15:0]) : 8'h80;
     show_osd  <= db15_en & ((joydb15_1[10] & joydb15_1[6]) | (joydb15_2[10]&joydb15_2[6]));
 end
 
@@ -208,7 +273,7 @@ jtframe_psxpad #(.CLK_HZ(CLK_HZ)) u_psxpad(
     .id        ( psx_id    ),
     .btn       ( psx_btn   ),
     .ana       ( psx_ana   ),
-    .upd       (           )
+    .upd       ( psx_upd   )
 );
 
 endmodule

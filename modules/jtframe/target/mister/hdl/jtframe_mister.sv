@@ -445,6 +445,8 @@ jtframe_mister_dwnld u_dwnld(
 
 wire [7:0] hps_din;
 wire [15:0] joyusb_1, joyusb_2, joyana_usb_l1, joyana_usb_r1;
+wire [ 8:0] spinner_usb_1;
+wire [ 7:0] paddle_usb_1;
 wire        psx_en;
 
 // User port: 0 off, 1 DB15, then UART (if JTFRAME_UART) and the PSX SNAC pad.
@@ -472,10 +474,14 @@ jtframe_joymux #(.BUTTONS(BUTTONS)) u_joymux(
     .joyusb_2   ( joyusb_2  ),
     .anausb_l1  ( joyana_usb_l1 ),
     .anausb_r1  ( joyana_usb_r1 ),
+    .spinusb_1  ( spinner_usb_1 ),
+    .padusb_1   ( paddle_usb_1  ),
     .joymux_1   ( joystick1 ),
     .joymux_2   ( joystick2 ),
     .anamux_l1  ( joyana_l1 ),
-    .anamux_r1  ( joyana_r1 )
+    .anamux_r1  ( joyana_r1 ),
+    .spinmux_1  ( spinner_1 ),
+    .padmux_1   ( paddle_1  )
 );
 `else
 assign db15_en   = 0;
@@ -485,6 +491,8 @@ assign joystick1 = joyusb_1;
 assign joystick2 = joyusb_2;
 assign joyana_l1 = joyana_usb_l1;
 assign joyana_r1 = joyana_usb_r1;
+assign spinner_1 = spinner_usb_1;
+assign paddle_1  = paddle_usb_1;
 `endif
 
 `ifdef JTFRAME_SHADOW
@@ -565,12 +573,12 @@ hps_io #(
     .ps2_kbd_data_out( ps2_kbd_data   ),
 
     // paddle 0..255
-    .paddle_0        ( paddle_1       ),
+    .paddle_0        ( paddle_usb_1   ),
     .paddle_1        ( paddle_2       ),
     .paddle_2        ( paddle_3       ),
     .paddle_3        ( paddle_4       ),
 
-    .spinner_0       ( spinner_1      ),
+    .spinner_0       ( spinner_usb_1  ),
     .spinner_1       ( spinner_2      ),
     .spinner_2       ( spinner_3      ),
     .spinner_3       ( spinner_4      ),
