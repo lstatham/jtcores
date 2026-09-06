@@ -103,18 +103,45 @@ function [15:0] psx2joy(
     psx2joy = j;
 endfunction
 
+// neGcon twist centre: the value seen in the first frame after the pad
+// connects is taken as zero (the pad is at rest when the core starts, and
+// toggling the OSD option re-centres it). Small dead zones keep a pad that
+// does not return exactly to rest from steering or creeping the pedals.
+localparam TWIST_DZ = 3;   // counts either side of centre
+localparam PEDAL_DZ = 8;   // counts, out of 255
+
+reg  [7:0] twist_off = 8'h80;
+reg        conn_l    = 0;
+
+always @(posedge clk) begin
+    conn_l <= psx_conn;
+    if( psx_conn && !conn_l ) twist_off <= psx_id==ID_NEGCON ? psx_ana[7:0] : 8'h80;
+end
+
+// centre, clamp to -128..127 and apply the dead zone
+function [7:0] centre_twist( input [7:0] raw, input [7:0] off );
+    reg signed [9:0] d;
+    d = $signed({2'b0,raw}) - $signed({2'b0,off});
+    if( d > 10'sd127 )  d = 10'sd127;
+    if( d < -10'sd128 ) d = -10'sd128;
+    if( d <= $signed(TWIST_DZ[9:0]) && d >= -$signed(TWIST_DZ[9:0]) ) d = 0;
+    centre_twist = d[7:0];
+endfunction
+
+function [7:0] pedal_up( input [7:0] raw );   // 00..FF -> 0..-127, pushing the stick up
+    pedal_up = raw <= PEDAL_DZ[7:0] ? 8'd0 : 8'd0 - {1'b0, raw[7:1]};
+endfunction
+
 // Analog halfwords to MiSTer signed sticks ({Y,X}, right/down positive).
 // neGcon: twist on left X, I on left Y pushed up, II on right Y pushed up,
 // so a core's "steering wheel with pedals" mode sees wheel, gas and brake.
 function [31:0] psx2ana(     // { r1, l1 }
     input [ 7:0] pad_id,
-    input [31:0] a           // { byte6, byte5, byte4, byte3 }
+    input [31:0] a,          // { byte6, byte5, byte4, byte3 }
+    input [ 7:0] off
 );
-    reg [7:0] i_up, ii_up;
     if( pad_id == ID_NEGCON ) begin
-        i_up   = 8'd0 - {1'b0, a[15: 9]};  // I  : 00..FF -> 0..-127
-        ii_up  = 8'd0 - {1'b0, a[23:17]};  // II : 00..FF -> 0..-127
-        psx2ana = { ii_up, 8'h00, i_up, a[7:0]^8'h80 };
+        psx2ana = { pedal_up(a[23:16]), 8'h00, pedal_up(a[15:8]), centre_twist(a[7:0], off) };
     end else begin
         // DualShock / analog stick: bytes are RX, RY, LX, LY with 80h centre
         psx2ana = { a[15:8]^8'h80, a[7:0]^8'h80, a[31:24]^8'h80, a[23:16]^8'h80 };
@@ -122,7 +149,7 @@ function [31:0] psx2ana(     // { r1, l1 }
 endfunction
 
 wire [15:0] psxjoy_1 = psx_conn ? psx2joy( psx_id, psx_btn ) : 16'd0;
-wire [31:0] psxana_1 = psx_conn ? psx2ana( psx_id, psx_ana ) : 32'd0;
+wire [31:0] psxana_1 = psx_conn ? psx2ana( psx_id, psx_ana, twist_off ) : 32'd0;
 
 always @(posedge clk) begin
     joymux_1  <= psx_en ? psxjoy_1 : assign_joy( joydb15_1, joyusb_1 );
