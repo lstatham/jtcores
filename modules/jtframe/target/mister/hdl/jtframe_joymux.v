@@ -38,6 +38,12 @@ localparam START_BIT  = 6+(BUTTONS-2);
 localparam COIN_BIT   = 7+(BUTTONS-2);
 
 localparam [7:0] ID_NEGCON = 8'h23;
+localparam [7:0] ID_JOGCON = 8'he3;
+
+// Jogcon: dial counts either side of centre that mean full lock (the MiSTer
+// JogConUSB firmware uses the same 80), and the motor hold strength 1-15.
+localparam JOG_RANGE = 80;
+localparam JOG_FORCE = 15;
 
 wire [15:0] joydb15_1,joydb15_2;
 wire        joy_din, joy_clk, joy_load;
@@ -47,6 +53,7 @@ wire        psx_att_n, psx_cmd, psx_sck, psx_dat, psx_ack_n, psx_conn;
 wire [ 7:0] psx_id;
 wire [15:0] psx_btn;
 wire [31:0] psx_ana;
+wire [ 7:0] psx_motor;
 
 // USER_OUT: pins not driven by the selected mode stay high (input)
 // PSX SNAC pin roles follow PSX_MiSTer: 0 /ATT2, 1 /ATT1, 2 CMD, 3 ACK, 4 DAT, 5 CLK, 6 IRQ
@@ -132,6 +139,19 @@ function [7:0] pedal_up( input [7:0] raw );   // 00..FF -> 0..-127, pushing the 
     pedal_up = raw <= PEDAL_DZ[7:0] ? 8'd0 : 8'd0 - {1'b0, raw[7:1]};
 endfunction
 
+// Jogcon dial counter (signed, zero at init) to a signed stick byte:
+// clamp to +/-JOG_RANGE, then scale by 127/JOG_RANGE (813/512 for 80)
+function [7:0] jog2axis( input [15:0] pos );
+    reg        neg;
+    reg [15:0] mag;
+    reg [25:0] m;
+    neg = pos[15];
+    mag = neg ? (16'd0 - pos) : pos;
+    if( mag > JOG_RANGE[15:0] ) mag = JOG_RANGE[15:0];
+    m   = mag * 26'd813;
+    jog2axis = neg ? (8'd0 - m[16:9]) : m[16:9];
+endfunction
+
 // Analog halfwords to MiSTer signed sticks ({Y,X}, right/down positive).
 // neGcon: twist on left X, I on left Y pushed up, II on right Y pushed up,
 // so a core's "steering wheel with pedals" mode sees wheel, gas and brake.
@@ -142,6 +162,9 @@ function [31:0] psx2ana(     // { r1, l1 }
 );
     if( pad_id == ID_NEGCON ) begin
         psx2ana = { pedal_up(a[23:16]), 8'h00, pedal_up(a[15:8]), centre_twist(a[7:0], off) };
+    end else if( pad_id == ID_JOGCON ) begin
+        // dial on left X, self-centred by the motor hold command
+        psx2ana = { 16'h0000, 8'h00, jog2axis(a[15:0]) };
     end else begin
         // DualShock / analog stick: bytes are RX, RY, LX, LY with 80h centre
         psx2ana = { a[15:8]^8'h80, a[7:0]^8'h80, a[31:24]^8'h80, a[23:16]^8'h80 };
@@ -150,6 +173,8 @@ endfunction
 
 wire [15:0] psxjoy_1 = psx_conn ? psx2joy( psx_id, psx_btn ) : 16'd0;
 wire [31:0] psxana_1 = psx_conn ? psx2ana( psx_id, psx_ana, twist_off ) : 32'd0;
+// Jogcon: hold the dial at its zero position with the configured strength
+assign psx_motor = (psx_conn && psx_id==ID_JOGCON) ? { 4'h3, JOG_FORCE[3:0] } : 8'h00;
 
 always @(posedge clk) begin
     joymux_1  <= psx_en ? psxjoy_1 : assign_joy( joydb15_1, joyusb_1 );
@@ -173,6 +198,7 @@ jtframe_psxpad #(.CLK_HZ(CLK_HZ)) u_psxpad(
     .rst       ( rst       ),
     .clk       ( clk       ),
     .en        ( psx_en    ),
+    .motor     ( psx_motor ),
     .att_n     ( psx_att_n ),
     .cmd       ( psx_cmd   ),
     .sck       ( psx_sck   ),
