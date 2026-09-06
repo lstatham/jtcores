@@ -28,7 +28,12 @@ assign { voffset, hoffset } = status[60:53];
 assign hsize_enable = status[48];
 assign hsize_scale  = status[52:49];
 
-assign uart_en  = status[38]; // It can be used by the cheat engine or the game
+// User port option: 0 off, 1 DB15, 2 UART (only with JTFRAME_UART), then PSX pad
+`ifdef JTFRAME_UART
+assign uart_en  = status[38:37]==2'd2; // It can be used by the cheat engine or the game
+`else
+assign uart_en  = 0;
+`endif
 
 // Sinden Lightgun white borders
 assign gun_border_en = status[8];

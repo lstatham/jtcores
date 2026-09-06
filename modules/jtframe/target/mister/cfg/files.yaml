@@ -8,6 +8,7 @@ jtframe/target/mister:
     - jtframe_mr_ddrmux.v
     - jtframe_mr_ddrtest.v
     - jtframe_joymux.v
+    - jtframe_psxpad.v
     - sys.qip
     - pll.qip
     - joydb15.v

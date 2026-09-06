@@ -299,7 +299,7 @@ assign {FB_PAL_CLK, FB_FORCE_BLANK, FB_PAL_ADDR, FB_PAL_DOUT, FB_PAL_WR} = '0;
 // If JTFRAME_CHEAT is not defined, the cheat side is disabled
 // Otherwise, both can listen and talk
 always @(posedge clk_sys) begin
-    USER_OUT <= db15_en ? joy_out :
+    USER_OUT <= (db15_en|psx_en) ? joy_out :
         uart_en ? {~6'h0, uart_tx&game_tx } :
         7'h7f;
 end
@@ -444,11 +444,18 @@ jtframe_mister_dwnld u_dwnld(
 );
 
 wire [7:0] hps_din;
-wire [15:0] joyusb_1, joyusb_2;
+wire [15:0] joyusb_1, joyusb_2, joyana_usb_l1, joyana_usb_r1;
+wire        psx_en;
 
-
+// User port: 0 off, 1 DB15, then UART (if JTFRAME_UART) and the PSX SNAC pad.
+// See target/mister/cfgstr and jtframe_mister_status for the same decode.
 `ifndef JTFRAME_NO_DB15
-assign db15_en  = status[37];
+assign db15_en  = status[38:37]==2'd1;
+`ifdef JTFRAME_UART
+assign psx_en   = status[38:37]==2'd3;
+`else
+assign psx_en   = status[38:37]==2'd2;
+`endif
 jtframe_joymux #(.BUTTONS(BUTTONS)) u_joymux(
     .rst        ( rst       ),
     .clk        ( clk_sys   ),
@@ -460,16 +467,24 @@ jtframe_joymux #(.BUTTONS(BUTTONS)) u_joymux(
 
     // joystick mux
     .db15_en    ( db15_en   ),
+    .psx_en     ( psx_en    ),
     .joyusb_1   ( joyusb_1  ),
     .joyusb_2   ( joyusb_2  ),
+    .anausb_l1  ( joyana_usb_l1 ),
+    .anausb_r1  ( joyana_usb_r1 ),
     .joymux_1   ( joystick1 ),
-    .joymux_2   ( joystick2 )
+    .joymux_2   ( joystick2 ),
+    .anamux_l1  ( joyana_l1 ),
+    .anamux_r1  ( joyana_r1 )
 );
 `else
 assign db15_en   = 0;
+assign psx_en    = 0;
 assign show_osd  = 0;
 assign joystick1 = joyusb_1;
 assign joystick2 = joyusb_2;
+assign joyana_l1 = joyana_usb_l1;
+assign joyana_r1 = joyana_usb_r1;
 `endif
 
 `ifdef JTFRAME_SHADOW
@@ -538,11 +553,11 @@ hps_io #(
     .joystick_1      ( joyusb_2       ),
     .joystick_2      ( joystick3      ),
     .joystick_3      ( joystick4      ),
-    .joystick_l_analog_0( joyana_l1   ),
+    .joystick_l_analog_0( joyana_usb_l1 ),
     .joystick_l_analog_1( joyana_l2   ),
     .joystick_l_analog_2( joyana_l3   ),
     .joystick_l_analog_3( joyana_l4   ),
-    .joystick_r_analog_0( joyana_r1   ),
+    .joystick_r_analog_0( joyana_usb_r1 ),
     .joystick_r_analog_1( joyana_r2   ),
     .joystick_r_analog_2( joyana_r3   ),
     .joystick_r_analog_3( joyana_r4   ),
