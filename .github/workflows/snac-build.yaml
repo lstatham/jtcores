@@ -1,0 +1,74 @@
+name: Build core with PSX SNAC pad
+
+# Builds one JT core for one target with jotego's public Quartus 20.1
+# image, exactly as the upstream compile-custom workflow does, but without
+# the private Pocket submodule. Dispatch with:
+#   gh workflow run snac-build.yaml --ref snac-psx -f core=outrun -f target=mister
+
+on:
+  workflow_dispatch:
+    inputs:
+      core:
+        description: Core folder name under cores/
+        required: true
+        default: outrun
+        type: string
+      target:
+        description: FPGA target
+        required: true
+        default: mister
+        type: string
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Init public submodules
+        run: |
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+          git config --global url."https://www.github.com/".insteadOf "git@www.github.com:"
+          # every top-level module except the private Pocket target
+          for m in $(git config --file .gitmodules --get-regexp path | awk '{print $2}'); do
+            case "$m" in modules/jtframe/target/pocket) continue;; esac
+            git submodule update --init --depth 1 "$m" || echo "WARN: could not init $m"
+          done
+
+      - name: Free disk space for the 5 GB toolchain image
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - name: Compile
+        env:
+          CORE: ${{ inputs.core }}
+          TARGET: ${{ inputs.target }}
+        run: |
+          docker run --network host -v "$PWD":/jtcores jotego/jtcore20 \
+            /jtcores/modules/jtframe/devops/xjtcore.sh "$CORE" "$TARGET"
+          ls -la release/"$TARGET"/ release/"$TARGET"/cores 2>/dev/null || find release -maxdepth 3
+
+      - name: Collect build log
+        if: always()
+        env:
+          CORE: ${{ inputs.core }}
+          TARGET: ${{ inputs.target }}
+        run: |
+          mkdir -p logs
+          cp -v cores/"$CORE"/"$TARGET"/*.log logs/ 2>/dev/null || true
+          cp -v cores/"$CORE"/*.log logs/ 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ${{ inputs.core }}-${{ inputs.target }}-snac
+          path: |
+            release
+            logs
+          retention-days: 7
