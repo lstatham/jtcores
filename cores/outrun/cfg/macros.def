@@ -68,6 +68,8 @@ JTFRAME_CREDITS_HSTART=32
 [mister|sockit|de1soc|de10std|sidi128]
 # Controller options have only been tested on MiSTer
 CORE_OSD=OKM,Control Type,A.Stick,A.Triggers,A.Wheel;
+# PSX pad on SNAC: R2 accelerate, R1 brake, L1 gear (jtframe_joymux.v)
+JTFRAME_PSX_RACING
 #JTFRAME_CHEAT
 
 [sidi128]
