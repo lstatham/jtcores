@@ -97,8 +97,8 @@ endfunction
 // bits 3:0 up/down/left/right, then buttons, then start and coin.
 // Regular pads: cross, circle, square, triangle, L1, R1 as buttons 1-6.
 // JTFRAME_PSX_RACING (racing cores): R2, R1, L1 as buttons 1-3
-// (accelerate, brake, gear in OutRun), with cross, circle, square
-// still on them; triangle is button 4.
+// (accelerate, brake, gear in OutRun), with cross, square, circle
+// also on them in that order; triangle is button 4.
 // neGcon: A, B, R as buttons 1-3 (I and II are analog, see below).
 // Bit order from psx-spx, "Controllers - Standard Digital/Analog
 // Controllers": 8 L2, 9 R2, 10 L1, 11 R1, 12 triangle, 13 circle,
@@ -120,8 +120,8 @@ function [15:0] psx2joy(
     end else begin
 `ifdef JTFRAME_PSX_RACING
         j[4] = ~b[9]  | ~b[14]; // R2 or cross
-        j[5] = ~b[11] | ~b[13]; // R1 or circle
-        j[6] = ~b[10] | ~b[15]; // L1 or square
+        j[5] = ~b[11] | ~b[15]; // R1 or square
+        j[6] = ~b[10] | ~b[13]; // L1 or circle
         j[7] = ~b[12];          // triangle
 `else
         j[4] = ~b[14];  // cross
